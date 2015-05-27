@@ -1,0 +1,143 @@
+#!/bin/bash
+#
+# Author: Danilo Cianfrone: matricola 501292
+# File:   watorscript
+# Copyright: Il programma qui presente è, in ogni sua parte, opera originale dell'autore.
+#            La copia di tale programma è severamente vietata da parte dell'autore stesso.
+#            Danilo Cianfrone.
+
+function print_help ()
+{
+    echo "Usage: watorscript file [OPTION]" 1>&2
+    echo "" 1>&2
+    echo "    OPTIONS:   -f [Returns number of fish in WATOR file]" 1>&2
+    echo "               -s [Returns number of shark in WATOR file]" 1>&2
+    echo "           --help [Print this usage and exit]" 1>&2
+}
+
+function not_valid ()
+{
+    echo "NO" 1>&2
+    exit 1
+}
+
+# Per il check dei flag utilizza espressioni regolari
+# settate di default a False.
+shark_count_flag=false
+fish_count_flag=false
+
+input_file=""    # Nome del file di input, di default è una stringa vuota.
+
+# Check sul numero di argomenti
+if [[ $# < 1 || $# > 2 ]] ; then
+    # DEBUG: print_help
+    exit 1
+fi
+
+# Parsing argomenti e attivazione flags
+for arg in "$@"
+do
+    case "$arg" in
+        "-s"     ) 
+                    if ! $fish_count_flag ; then 
+                        shark_count_flag=true
+                    else
+                        exit 1
+                    fi ;;
+        "-f"     ) 
+                    if ! $shark_count_flag ; then 
+                        fish_count_flag=true
+                    else
+                        exit 1
+                    fi ;;
+        "--help" ) 
+                    print_help
+                    exit 1 ;;
+                *)
+                    if [ -f "$arg" ]; then
+                        # Se l'argomento è un file esistente, allora assumiamo sia
+                        # il file di input per il wator.
+                        input_file="$arg"
+                    else
+                        # Stampa errore su stderr.
+                        echo "${arg} doesn't exists. Exiting" 1>&2
+                        exit 1
+                    fi ;;
+    esac
+done
+
+# Nessun file di input, errore.
+if [ -z $input_file ] ; then
+    echo "Input file not specified. Exiting." 1>&2
+    exit 1
+fi
+
+# Apertura del file (sola lettura)
+exec 10< $input_file
+
+# Legge la riga 1 con check sulla lettura avvenuta
+if ! read -u10 row ; then
+    echo "Error while reading line 1 in ${input_file}. Exiting" 1>&2
+    exit 1
+fi
+
+# Legge la riga 2 con check sulla lettura avvenuta
+if ! read -u10 col ; then
+    echo "Error while reading line 2 in ${input_file}. Exiting" 1>&2
+    exit 1
+fi
+
+# Controlliamo che row e col siano effettivamente cifre intere accettabili
+if [[ ! $row =~ ^-?[0-9]+$ && ! $col =~ ^-?[0-9]+$ && $row > 0 && $col > 0 ]]; then
+    not_valid
+fi
+
+let fish_count=0
+let shark_count=0
+let check_lines=0
+
+# Usa il file qui
+while read -u10 -r line ;
+do
+    # Test sugli spazi corretti
+    for (( i = 1; i < (2 * $col) - 1; i += 2 )); 
+    do
+        if [[ ! "${line:i:1}" == " " ]] ; then
+            echo "Line: $line" 1>&2
+            echo "Position: $i" 1>&2
+            echo "Element: ${line:i:1}" 1>&2
+            not_valid
+        fi    
+    done
+
+    # Test sui caratteri corretti
+    for (( i = 0; i < (2 * $col) - 1; i += 2 )); 
+    do
+        case "${line:i:1}" in
+            "F") ((fish_count++)) ;;
+            "S") ((shark_count++)) ;;
+            "W") ;;
+              *) not_valid ;;
+        esac
+    done
+
+    ((check_lines++))
+done
+
+# Chiusura del file
+exec 10>&-
+
+if [[ ! $check_lines == $row ]] ; then
+    not_valid
+fi
+
+# Stampa risultato.
+if $fish_count_flag ; then
+    echo "$fish_count"
+elif $shark_count_flag ; then
+    echo "$shark_count"
+else
+    echo "OK" 1>&2
+fi
+
+exit 0
