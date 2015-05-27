@@ -44,11 +44,15 @@ EXE3=shark3
 
 
 # creazione libreria 
-lib:  $(objects1)
+lib:  $(objects1) $(objects2)
 	-rm  -f $(LIBNAME1)
+	-rm  -f $(LIBNAME2)
 	-rm  -f $(LIBDIR)/$(LIBNAME1)
+	-rm  -f $(LIBDIR)/$(LIBNAME2)
 	ar -r $(LIBNAME1) $(objects1)
+	ar -r $(LIBNAME1) $(objects2)
 	cp $(LIBNAME1) $(LIBDIR)
+	cp $(LIBNAME2) $(LIBDIR)
 
 
 ###### Primo test 
@@ -76,12 +80,6 @@ test-three.o: test-three.c wator.h
 
 
 #### secondo frammento
-# creazione libreria
-lib2:  $(objects2)
-	-rm  -f $(LIBNAME2)
-	-rm  -f $(LIBDIR)/$(LIBNAME2)
-	ar -r $(LIBNAME2) $(objects2)
-	cp $(LIBNAME2) $(LIBDIR)
 
 ######### target visualizer e wator (da completare)
 wator: wator_process.o
@@ -93,7 +91,7 @@ visualizer: visualizer.o
 wator_process.o: wator_process.c wator_process.h $(LIBNAME1) $(LIBNAME2)
 	$(CC) $(CFLAG) -c $<
 
-visualizer.o: visualizer.c visualizer.h
+visualizer.o: visualizer.c visualizer.h $(LIBNAME2)
 	$(CC) $(CFLAG) -c $<
 
 # make rule per gli altri .o del secondo/terzo frammento (***DA COMPLETARE***)

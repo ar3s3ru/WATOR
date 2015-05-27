@@ -1,7 +1,3 @@
-#define _GNU_SOURCE
-#define __USE_GNU
-
-#include <features.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <errno.h>      /* Per l'errno */
