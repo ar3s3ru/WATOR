@@ -358,8 +358,6 @@ static void exit_cleaner()
     {
         free(buffer);
         free(tIDs.workIDs);
-        /* Ripulisco i file temporanei del worker */
-        system("rm wator_worker_*");
     }
 }
 
