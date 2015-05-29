@@ -1,3 +1,11 @@
+/** 
+    \file utils.c
+    \author Danilo Cianfrone, matricola 501292
+
+    Il programma qui presente è, in ogni sua parte, opera originale dell'autore.
+    Danilo Cianfrone.
+ */
+    
 #include "utils.h"
 
 #ifdef __UTILS_H__

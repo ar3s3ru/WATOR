@@ -31,17 +31,12 @@ LIBNAME2 = libUtils.a
 objects1 = wator.o
 objects2 = utils.o
 
-
-
-
-
 # Nome eseguibili primo frammento
 EXE1=shark1
 EXE2=shark2
 EXE3=shark3
 
 .PHONY: clean cleanall lib libUtils test11 test12 consegna1 docu
-
 
 # creazione libreria 
 lib:  $(objects1) $(objects2)
@@ -53,7 +48,6 @@ lib:  $(objects1) $(objects2)
 	ar -r $(LIBNAME1) $(objects2)
 	cp $(LIBNAME1) $(LIBDIR)
 	cp $(LIBNAME2) $(LIBDIR)
-
 
 ###### Primo test 
 shark1: test-one.o 
@@ -97,7 +91,6 @@ visualizer.o: visualizer.c visualizer.h $(LIBNAME2)
 # make rule per gli altri .o del secondo/terzo frammento (***DA COMPLETARE***)
 utils.o: utils.c utils.h
 	$(CC) $(CFLAGS) -c $<
-
 
 ########### NON MODIFICARE DA QUA IN POI ################
 # genera la documentazione con doxygen

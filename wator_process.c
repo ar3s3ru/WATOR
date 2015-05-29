@@ -1,21 +1,30 @@
+/** 
+    \file wator_process.c
+    \author Danilo Cianfrone, matricola 501292
+
+    Il programma qui presente è, in ogni sua parte, opera originale dell'autore.
+    Danilo Cianfrone.
+ */
+
 #include "wator_process.h"
 
 #ifdef __WATOR__
 
 extern int errno;
 
-static int pid;                /* Process ID per la fork del visualizer */
-static int wpid;               /* Process ID del processo wator */ 
-static int sck_fd;             /* Socket file descriptor */
-static int can_send     = 0;
-static int step         = 0;   /* Descrive gli step del processo */
-static int workers_done = 0;   /* Numero di workers che hanno 
-                                  terminato la computazione */
+static int pid;             /* Process ID per la fork del visualizer */
+static int wpid;            /* Process ID del processo wator */ 
+static int sck_fd;          /* Socket file descriptor */
+static int x_off, y_off;    /* Offsets per produrre le tasks */
+static int tasks_to_do;
+static int tasks_done = 0;
+static int step       = 0;  /* Descrive gli step del processo */
+
 static struct thread_ids tIDs; /* Threads IDs */
 
-volatile sig_atomic_t looping = 1;
-volatile sig_atomic_t dumping = 0;
-volatile sig_atomic_t sig     = 0;
+volatile sig_atomic_t looping      = 1;
+volatile sig_atomic_t dumping      = 0;
+volatile sig_atomic_t sig          = 0;
 volatile sig_atomic_t has_quit_vis = 0; 
 
 char *buffer   = NULL; /* Buffer per la read */
@@ -25,14 +34,14 @@ queue_t q_task           = { NULL, NULL, 0 };    /* Coda condivisa */
 struct conf_param params = {-1, -1, NULL, NULL}; /* Parametri processo */
 
 /* Mutex */
-static pthread_mutex_t mtx_wator   = PTHREAD_MUTEX_INITIALIZER;
-static pthread_mutex_t mtx_queue   = PTHREAD_MUTEX_INITIALIZER;
-static pthread_mutex_t mtx_send    = PTHREAD_MUTEX_INITIALIZER;
-/* Condition variables */
-static pthread_cond_t cond_workers  = PTHREAD_COND_INITIALIZER;
-static pthread_cond_t cond_queue    = PTHREAD_COND_INITIALIZER;
-static pthread_cond_t cond_send     = PTHREAD_COND_INITIALIZER;
+static pthread_mutex_t mtx_wator = PTHREAD_MUTEX_INITIALIZER;
+static pthread_mutex_t mtx_queue = PTHREAD_MUTEX_INITIALIZER;
+static pthread_mutex_t mtx_tasks = PTHREAD_MUTEX_INITIALIZER;
 
+/* Condition variables */
+static pthread_cond_t empty_queue = PTHREAD_COND_INITIALIZER;
+static pthread_cond_t tasks_disp  = PTHREAD_COND_INITIALIZER;
+static pthread_cond_t tasks_coll  = PTHREAD_COND_INITIALIZER;
 
 static void sigint_handler(int pid)
 {
@@ -56,18 +65,45 @@ static void sigusr1_handler(int pid)
 
 static void sigusr2_handler(int pid)
 {
-    /* Invia SIGUSR1 al processo visualizer */
+    /* Comunica che il visualizer è uscito correttamente */
     has_quit_vis = 1;
 }
 
+static rect_t *produce_tasks(wator_t *WATOR, int x_off, int y_off)
+{
+    rect_t *elems = NULL;
 
-static void *dispatcherFoo()
+    int i, j;
+    int row = WATOR->plan->nrow / x_off;
+    int col = WATOR->plan->ncol / y_off;
+
+    if (WATOR == NULL || x_off < 1 || y_off < 1)
+    {
+        errno = EINVAL;
+        return NULL;
+    }
+
+    if ( (elems = (rect_t *) malloc(sizeof(rect_t) * tasks_to_do)) == NULL )
+        return NULL;
+
+    for (i = 0; i < row; ++i)
+    {
+        for (j = 0; j < col; ++j)
+        {
+            elems[(i * col) + j].p1.x = j * y_off;
+            elems[(i * col) + j].p1.y = i * x_off;
+            elems[(i * col) + j].p2.x = ((j + 1) * y_off) - 1;
+            elems[(i * col) + j].p2.y = ((i + 1) * x_off) - 1;
+        }
+    }
+
+    return elems;
+}
+
+static void *disp_routine()
 {
     int i;
-    rect_t *elems;
-
-    /*fprintf(stderr, "Dispatcher thread created.\n");
-    fflush(stderr);*/
+    rect_t *elems = NULL;
 
     if ( workers_creation(&tIDs) == -1 )
     {
@@ -75,220 +111,219 @@ static void *dispatcherFoo()
         pthread_exit((void *) 1);
     }
 
-    /* Passaggio allo STEP 4, completato */
-    ++step;
-
     while (looping)
     {
-        if ( (elems = (rect_t *) malloc(sizeof(rect_t) * params.workers)) 
-                == NULL )
+        /* Produci le tasks */
+        if ( (elems = produce_tasks(Wator, x_off, y_off)) ==  NULL )
         {
-            perror("Error allocating elements");
+            perror("Error producing tasks");
             pthread_exit((void *) 1);
         }
 
-        for (i = 0; i < params.workers; ++i)
-        {
-            elems[i].p1.x = 0;
-            elems[i].p1.y = 0;
-            elems[i].p2.x = 1;
-            elems[i].p2.y = 1;
-        }
-
-        /*fprintf(stderr, "[D] Elements created.\n");
-        fflush(stderr);*/
-
+        /* Prendi la lock sulla queue */
         pthread_mutex_lock(&mtx_queue);
-    
-        /*fprintf(stderr, "[D] Lock queue granted.\n");
-        fflush(stderr);*/
 
-        /* Elaborazione in mutua esclusione */
-        for (i = 0; i < params.workers; ++i)
+        /* Push delle task sulla coda */
+        for (i = 0; i < tasks_to_do; ++i)
             push_queue(elems[i], &q_task);
 
-        /*fprintf(stderr, "[D] Elements pushed.\n");
-        fflush(stderr);*/
+        /* Risveglia tutti i worker in attesa */
+        pthread_cond_broadcast(&empty_queue);
 
-        /* Risveglia tutti i thread bloccati sulla queue */
-        pthread_cond_broadcast(&cond_queue);
-        /*fprintf(stderr, "[D] Broadcast workers.\n");
-        fflush(stderr);*/
-
-        /* Attendi che tutti i worker abbiano terminato */
-        while (!isempty_queue(&q_task) && workers_done != params.workers)
-        {
-            /*if (looping == 0) break;*/
-            /*fprintf(stderr, "[D] Waiting on cond workers_done.\n");
-            fflush(stderr);*/
-            pthread_cond_wait(&cond_workers, &mtx_queue);
-        }
-        workers_done = 0;
-        /* Termine elaborazione in mutua esclusione */
+        /* Esci dalla mutua esclusione */
         pthread_mutex_unlock(&mtx_queue);
 
-        /*fprintf(stderr, "[D] Unlocked queue.\n");
-        fflush(stderr);*/
-       
-        pthread_mutex_lock(&mtx_send);
-        can_send = 1;
-        pthread_cond_signal(&cond_send);
-        pthread_mutex_unlock(&mtx_send);
+        /* Prendi la lock sul tasks counter */
+        pthread_mutex_lock(&mtx_tasks);
 
-        if (looping == 0)
-            pthread_cond_broadcast(&cond_queue);
+        /* Attendi che le tasks siano finite */
+        while (tasks_done != tasks_to_do)
+        {
+            if (looping == 0)
+            {
+                /* Tentativo di wait su ciclo terminato, forza l'uscita */
+                pthread_mutex_unlock(&mtx_tasks);
+                pthread_exit((void *) 0);
+            }
+            /* Attesa sulla tasks_disp */
+            pthread_cond_wait(&tasks_disp, &mtx_tasks);
+        }
 
-        /*fprintf(stderr, "[D] Looping: %d\n", looping);
-        fflush(stderr);*/
+        /* Resetta il numero di tasks eseguite */
+        tasks_done = 0;
+
+        /* Esci dalla regione critica del tasks counter */
+        pthread_mutex_unlock(&mtx_tasks);
+        /* Reset valore array di elementi */
+        elems = NULL;
     }
 
+    /* Join sui workers */
     for (i = 0; i < params.workers; ++i)
         pthread_join(tIDs.workIDs[i].w_tID, NULL);
 
     pthread_exit((void *) 0);
 }
 
-static void *collectorFoo(void *bufarg)
+static void *work_routine(void *arg)
 {
-    int cln_fd;
-    char *buffer = (char *) bufarg;
-
-    /*fprintf(stderr, "Collector thread created.\n");
-    fflush(stderr);*/
-
-    cln_fd = accept(sck_fd, NULL, 0);
-    /* Invio le dimensioni del pianeta al visualizer */
-    write(cln_fd, &(Wator->plan->nrow), sizeof(unsigned int));
-    write(cln_fd, &(Wator->plan->ncol), sizeof(unsigned int));
-    close(cln_fd);
-
-    /*fprintf(stderr, "[C] Sizes sent.\n");
-    fflush(stderr);*/
-
-    while (looping)
-    {
-        pthread_mutex_lock(&mtx_send);
-
-        while (!can_send)
-        {
-            /*fprintf(stderr, "[C] Waiting on cond1 send.\n");
-            fflush(stderr);*/
-            pthread_cond_wait(&cond_send, &mtx_send);
-        }
-
-        can_send = 0;
-        pthread_mutex_unlock(&mtx_send);
-
-        pthread_mutex_lock(&mtx_wator);
-       /* fprintf(stderr, "[C] Lock WATOR granted.\n");
-        fflush(stderr);*/
-
-        if (produce_buffer(Wator, buffer) == -1)
-        {
-            perror("Error creating buffer");
-            pthread_mutex_unlock(&mtx_wator);
-            pthread_exit((void *) EINVAL);
-        }
-        pthread_mutex_unlock(&mtx_wator);
-
-        /*fprintf(stderr, "[C] Unlocked and buffer produced.\n");
-        fflush(stderr);*/
-
-        /* Accetta la connessione del client */
-        cln_fd = accept(sck_fd, NULL, 0);
-
-        /* Utilizza il file descriptor del client
-           per tutte le operazioni di comunicazione. */
-        write(cln_fd, buffer, 
-            (Wator->plan->nrow * Wator->plan->ncol));
-        close(cln_fd);
-
-        /*fprintf(stderr, "[C] Buffer written, sending SIGUSR2 to visualizer.\n");
-        fflush(stderr);*/
-
-        if (dumping)
-        {
-            kill(pid, SIGUSR1);
-            dumping = 0;
-        }
-        else
-            kill(pid, SIGUSR2);
-
-        /*fprintf(stderr, "[C] Looping: %d\n", looping);
-        fflush(stderr);*/
-    }
-
-    pthread_exit((void *) 0);
-}
-
-static void *workerFoo(void *arg)
-{
-    qelem_t *workset  = NULL;
     char filename[20] = "wator_worker_";
     int wID           = *((int *) arg);
-    int chronons;
     int fd;
+
+    qelem_t *workset = NULL; 
 
     sprintf(&filename[13], "%d", wID);
 
-    /*fprintf(stderr, "[W%d] %s created.\n", wID, filename);
-    fflush(stderr);*/
-
     /* Crea il file di check */
     if ( (fd = open(filename, O_RDWR|O_CREAT, 0666)) == -1 )
-    {    
-        /* File non creato correttamente */
+    {
         perror("Error creating wid file");
-        pthread_exit((void *) &errno);
+        pthread_exit((void *) 1);
     }
 
     close(fd);
 
     while (looping)
     {
+        /* Prendi la lock sulla queue */
         pthread_mutex_lock(&mtx_queue);
-        /*fprintf(stderr, "[W%d] Lock queue granted.\n", wID);
-        fflush(stderr);*/
-        /* Elaborazione in mutua esclusione */
-        while (isempty_queue(&q_task) && looping == 1)
+
+        /* Attendo fin quando la coda sia non vuota */
+        while (isempty_queue(&q_task))
         {
-            /*fprintf(stderr, "[W%d] Waiting on cond1 queue.\n", wID);
-            fflush(stderr);*/
-            pthread_cond_wait(&cond_queue, &mtx_queue);
+            if (looping == 0)
+            {
+                /* Tentativo di wait su ciclo terminato, forza l'uscita */
+                pthread_mutex_unlock(&mtx_queue);
+                pthread_exit((void *) 0);
+            }
+            /* Attesa sulla empty_queue */
+            pthread_cond_wait(&empty_queue, &mtx_queue);
         }
 
+        /* Acquisisco l'elemento dalla queue, il nostro workset */
         workset = pop_queue(&q_task);
-        /*fprintf(stderr, "[W%d] Element got, unlocking.\n", wID);
-        fflush(stderr);*/
-        /* Termine elaborazione in mutua esclusione */
+
+        /* Esco dalla sezione critica della queue */
         pthread_mutex_unlock(&mtx_queue);
 
-        chronons = 0;
+        /* Prendi la lock sul WATOR */
         pthread_mutex_lock(&mtx_wator);
-        /* Lavora sull'elemento workset */
-        free(workset);
-        /*fprintf(stderr, "[W%d] Lock WATOR granted.\n", wID);
-        fflush(stderr);*/
-        while (chronons < params.chronons)
-        {
-            ++chronons;
-        }
 
+        /* Esegui il lavoro sul workset */
+        free(workset);
+
+        /* Esci dalla sezione critica del WATOR */
         pthread_mutex_unlock(&mtx_wator);
 
-        /*fprintf(stderr, "[W%d] Work terminated and unlocked WATOR.\n", wID);
-        fflush(stderr);*/
+        /* Entra nella sezione critica del tasks counter */
+        pthread_mutex_lock(&mtx_tasks);
 
-        pthread_mutex_lock(&mtx_queue);
-        ++workers_done;
-        /* Comunica al dispatcher di aver terminato la computazione */
-        if (workers_done == params.workers || isempty_queue(&q_task))
-            pthread_cond_signal(&cond_workers);
-        pthread_mutex_unlock(&mtx_queue);
+        /* La tasks del worker è terminata, incrementa counter */
+        ++tasks_done;
 
-        /*fprintf(stderr, "[W%d] Looping: %d\n", wID, looping);
-        fflush(stderr);*/
+        /** Se le tasks del chronon sono state terminate, invia il
+            segnale al collector */
+        if (tasks_done == tasks_to_do /*|| looping == 0*/)
+            pthread_cond_signal(&tasks_coll);
+
+        /* Esci dalla sezione critica del tasks counter */
+        pthread_mutex_unlock(&mtx_tasks);
     }
+
+    pthread_exit((void *) 0);
+}
+
+static void *coll_routine(void *bufarg)
+{
+    char *buffer = (char *) bufarg;
+    int chronons = 0;
+    int cln_fd;
+
+    cln_fd = accept(sck_fd, NULL, 0);
+    /* Invia le dimensioni iniziali al visualizer */
+    write(cln_fd, &(Wator->plan->nrow), sizeof(unsigned int));
+    write(cln_fd, &(Wator->plan->ncol), sizeof(unsigned int));
+    close(cln_fd);
+
+    while (looping)
+    {
+        /* Entra nella regione critica del task counter */
+        pthread_mutex_lock(&mtx_tasks);
+
+        /** Resta in attesa fin quando i workers non abbiano
+            terminato la computazione */
+        while (tasks_done != tasks_to_do)
+        {
+            if (looping == 0)
+            {
+                /* Tentativo di wait su ciclo terminato, forza l'uscita */
+                pthread_mutex_unlock(&mtx_tasks);
+                goto term;
+            }
+            /* Attesa sulla variabile tasks_coll */
+            pthread_cond_wait(&tasks_coll, &mtx_tasks);
+        }
+
+        /* Aumenta il chronon passato */
+        ++chronons;
+
+        /* Esci dalla regione critica del task counter */
+        pthread_mutex_unlock(&mtx_tasks);
+
+        /** I chronons passati sono sufficienti per inviare
+            l'aggiornamento al visualizer */
+        if (chronons == params.chronons)
+        {
+            /* Entra nella regione critica del WATOR */
+            pthread_mutex_lock(&mtx_wator);
+
+            /* Produce il buffer */
+            if (produce_buffer(Wator, buffer) == -1)
+            {
+                perror("Error creating buffer");
+                pthread_mutex_unlock(&mtx_wator);
+                pthread_exit((void *) EINVAL);
+            }
+            
+            /* Esce dalla regione critica */
+            pthread_mutex_unlock(&mtx_wator);
+
+            /* Il dispatcher può riprendere a generare tasks */
+            pthread_cond_signal(&tasks_disp);
+
+            /* Accetta la connessione del client */
+            cln_fd = accept(sck_fd, NULL, 0);
+
+            /* Utilizza il file descriptor del client
+               per tutte le operazioni di comunicazione. */
+            write(cln_fd, buffer, 
+                (Wator->plan->nrow * Wator->plan->ncol));
+            close(cln_fd);
+
+            if (dumping)
+            {
+                /* Invia segnale di dumping al visualizer */
+                kill(pid, SIGUSR1);
+                dumping = 0;
+            }
+            else
+                /* Altrimenti invia segnale di stampa su stdout */
+                kill(pid, SIGUSR2);
+
+            /* Resetta il numero di chronons trascorsi */
+            chronons = 0;
+        }
+        else
+            /* Altrimenti sveglia il dispatcher per continuare la computazione */
+            pthread_cond_signal(&tasks_disp);
+    }
+
+    /* Risveglia eventuali thread rimasti bloccati */
+    term:
+        pthread_cond_signal(&tasks_disp);
+        pthread_cond_broadcast(&empty_queue);
 
     pthread_exit((void *) 0);
 }
@@ -481,7 +516,7 @@ static int workers_creation(struct thread_ids *tIDs)
         /* Creazione worker threads */
         tIDs->workIDs[i].w_wID = i;
         errno = pthread_create(&(tIDs->workIDs[i].w_tID), NULL, 
-            workerFoo, (void *) &(tIDs->workIDs[i].w_wID));
+            work_routine, (void *) &(tIDs->workIDs[i].w_wID));
 
         if (errno != 0)
         {
@@ -502,7 +537,8 @@ static int thread_creation(struct thread_ids *tIDs, char *buffer)
     }
 
     /* Creazione dispatcher thread */
-    errno = pthread_create(&(tIDs->dispID), NULL, dispatcherFoo, NULL);
+    errno = pthread_create(&(tIDs->dispID), NULL, disp_routine, NULL);
+    
     if (errno != 0)
     {
         perror("Error creating dispatcher thread");
@@ -511,7 +547,8 @@ static int thread_creation(struct thread_ids *tIDs, char *buffer)
 
     /* Creazione collector thread */
     errno = pthread_create(&(tIDs->collID), NULL, 
-        collectorFoo, (void *) buffer);
+        coll_routine, (void *) buffer);
+
     if (errno != 0)
     {
         perror("Error creating collector thread");
@@ -553,6 +590,7 @@ int main(int argc, char *argv[], char *envp[])
     struct stat check_conf;      /* Per il check su "wator.conf" */
     sigset_t set;
 
+    /* Acquisisce il PID di wator */
     wpid = getpid();
 
     /* Ripulisci il socket all'uscita */
@@ -651,6 +689,11 @@ int main(int argc, char *argv[], char *envp[])
                NULL,
                "Error loading WATOR file");
 
+    x_off = Wator->plan->nrow % 2 ? K : K_e ;
+    y_off = Wator->plan->ncol % 2 ? N : N_e ;
+
+    tasks_to_do = (Wator->plan->nrow / x_off) * (Wator->plan->ncol / y_off);
+
     /* Passaggio allo STEP 2, completato */
     ++step;
 
@@ -706,12 +749,11 @@ int main(int argc, char *argv[], char *envp[])
     pthread_join(tIDs.collID, NULL);
     pthread_join(tIDs.dispID, NULL);
 
-    /** Uccide visualizer con segnale sig e aspetta 1 secondo
+    /** Uccide visualizer con segnale sig e aspetta
         affinchè il segnale venga gestito */
-    while(!has_quit_vis)
+    while (!has_quit_vis)
     {
         kill(pid, sig);
-        sleep(1);
     }
     
     exit(EXIT_SUCCESS);

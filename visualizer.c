@@ -1,3 +1,11 @@
+/** 
+    \file visualizer.c
+    \author Danilo Cianfrone, matricola 501292
+
+    Il programma qui presente è, in ogni sua parte, opera originale dell'autore.
+    Danilo Cianfrone.
+ */
+    
 #include "visualizer.h"
 
 #ifdef __VISUALIZER__
@@ -14,18 +22,14 @@ volatile sig_atomic_t can_receive = 0;
 
 static void sigint_handler()
 {
-    /* TODO */
-    /*can_receive = 1;*/
     looping = 0;
-    /*dumping = 1;*/
+    dumping = 1;
 }
 
 static void sigterm_handler()
 {
-    /* TODO */
-    /*can_receive = 1;*/
     looping = 0;
-    /*dumping = 1;*/
+    dumping = 1;
 }
 
 static void sigusr1_handler()
@@ -44,16 +48,12 @@ static void exit_cleaner()
     /* STEP 1: Chiudi i file descriptor aperti */
     if (step > 0)
     {
-        fprintf(stderr, "[VIS] Step = %d, doing STEP 1.\n", step);
-        fflush(stderr);
         fclose(dmp_fs);
     }
 
     /* STEP 2: Libera il buffer della socket */
     if (step > 1)
     {
-        fprintf(stderr, "[VIS] Step = %d, doing STEP 2.\n", step);
-        fflush(stderr);
         free(buffer);
     }
 
@@ -93,10 +93,11 @@ int main(int argc, char *argv[], char *envp[])
     unsigned int nrow;    /* Numero di righe del WATOR */
     unsigned int ncol;    /* Numero di colonne del WATOR */
     long rewrite_off = 0; /* Offset dal quale riprendere la scrittura su dump */
-    /*long iteration   = 0;*/
+    long iteration   = 0;
 
     struct sockaddr_un sck_addr; /* Indirizzo della socket */
     struct sigaction signals;     /* Signal bitmap */
+    struct timespec tim = {0, 500000000L};
     sigset_t set;
 
     if (argc != 2)
@@ -193,63 +194,48 @@ int main(int argc, char *argv[], char *envp[])
 
     while (looping)
     {
+        /* Creazione della connessione */
         if (build_client(&sck_fd, &sck_addr, 0) == -1)
         {
             perror("Error creating client");
             exit(errno);
         }
 
-        fprintf(stderr, "[VIS] Waiting for signal.\n");
-        fflush(stderr);
-
         while (!can_receive)
         {
             if (looping == 0)
-            {
-                fprintf(stderr, "[VIS] Looping = 0, force break\n");
-                fflush(stderr);
+                /* Uscita forzata, ultimo ciclo */
                 can_receive = 1;
-            }
+            /* Rimane in attesa del segnale */
             sleep(1);
         }
 
-        fprintf(stderr, "[VIS] Signal received, getting data.\n");
-        fflush(stderr);
+        /* Segnale ricevuto, resetta la guardia */
         can_receive = 0;
         
+        /* Leggi dal socket */
         read(sck_fd, buffer, (nrow * ncol));
         close(sck_fd);
 
         if (!dumping)
         {
-            fprintf(stderr, "[VIS] Printing on screen.\n");
-            fflush(stderr);
             /* Mostra il pianeta a schermo */
             system("clear");    /* Invoca la clear della shell */
-            update_screen(stdout, buffer, nrow, ncol);
-            /*fprintf(stdout, "Iteration: %ld\n", iteration);
+            printf("Iteration: %d.\n", iteration++);
             fflush(stdout);
-            ++iteration;*/
+            update_screen(stdout, buffer, nrow, ncol);
         }
         else
         {
-            fprintf(stderr, "[VIS] Dumping on %s.\n", argv[1]);
-            fflush(stderr);
             /* Scrivi il pianeta sul file */
             fseek(dmp_fs, rewrite_off, SEEK_SET);
             update_screen(dmp_fs, buffer, nrow, ncol);
             dumping = 0;
         }
 
-        fprintf(stderr, "[VIS] Sleeping...\n");
-        fflush(stderr);
-        sleep(1);
-        fprintf(stderr, "[VIS] Looping = %d\n", looping);
-        fflush(stderr);
+        /* Attende mezzo secondo prima del nuovo ciclo */
+        nanosleep(&tim, NULL);
     }
-
-    fprintf(stderr, "[VIS] Exiting.\n");
-    fflush(stderr);
 
     exit(EXIT_SUCCESS);
 }

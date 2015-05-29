@@ -1,3 +1,7 @@
+#define _GNU_SOURCE
+#define __USE_GNU
+
+#include <features.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <errno.h>      /* Per l'errno */
@@ -10,6 +14,14 @@
 #include <pthread.h>    /* POSIX Thread */
 #include <sys/socket.h> /* Socket */
 #include <sys/types.h>
+/** 
+    \file utils.h
+    \author Danilo Cianfrone, matricola 501292
+
+    Il programma qui presente è, in ogni sua parte, opera originale dell'autore.
+    Danilo Cianfrone.
+ */
+
 #include <sys/stat.h>   /* mkdir() */
 #include <sys/un.h>     /* Sockaddr_un */
 
@@ -20,12 +32,18 @@
 
 /* Nome della socket */
 #define SOCKNAME "./tmp/visual.sck"
+
 /* Workers di default */
 #define NWORK_DEF 2
 /* Chronon di default */
 #define CHRON_DEF 5
 
 #define UNIX_PATH_MAX 108
+
+#define K   3
+#define N   3
+#define K_e 2
+#define N_e 2
 
 /** Viene controllato il valore di ritorno della funzione.
     Se uguale a "checkval", esce con errno.

@@ -1,10 +1,18 @@
+/** 
+    \file wator_process.h
+    \author Danilo Cianfrone, matricola 501292
+
+    Il programma qui presente è, in ogni sua parte, opera originale dell'autore.
+    Danilo Cianfrone.
+ */
+
 #include "utils.h"
 
 #ifdef __UTILS_H__
 #define __WATOR__
 
 /* Nome di default del dumpfile */
-#define DUMPF_DEF "visualizer.dump"
+#define DUMPF_DEF "wator.check"
 
 /** Struttura per i parametri di configurazione
     del processo.
@@ -58,22 +66,52 @@ static void sigterm_handler(int pid);
  */
 static void sigusr1_handler(int pid);
 
-static void *dispatcherFoo();
+/** Il segnale SIGUSR2 viene inviato dal processo visualizer
+    per comunicare di essere uscito con successo.
+ */
+static void sigusr2_handler();
+
+/** La funzione produce le tasks per la simulazione da dare ai worker.
+    Viene invocata dal thread dispatcher.
+
+    \param WATOR: puntatore alla struttura WATOR.
+    \param x_off: offset sulle righe.
+    \param y_off: offset sulle colonne.
+
+    \retval NULL in caso di errore.
+    \retval elems in caso di successo.
+ */
+static rect_t *produce_tasks(wator_t *WATOR, int x_off, int y_off);
+
+/** Esegue la routine del thread dispatcher.
+    È responsabile della creazione dei thread worker,
+    e della generazione delle task da computare.
+ */
+static void *disp_routine();
+
+/** Esegue la routine del thread worker.
+    Riceve le task dal thread worker e le utilizza
+    computando gli n-chronon stabiliti dalla simulazione.
+    
+    \param arg: puntatore al valore del worker ID.
+ */
+static void *work_routine(void *arg);
 
 /** Esegue la routine del thread collector.
     Avvia dunque la gestione del client-server side.
 
     \param bufarg: indirizzo del buffer.
  */
-static void *collectorFoo(void *bufarg);
+static void *coll_routine(void *bufarg);
 
-/** Esegue la routine del thread worker.
-    
-    \param arg: puntatore al valore del worker ID.
+/** Funzione di cleanup all'invocazione della exit().
+    Il programma tiene traccia delle risorse allocate
+    attraverso un numero definito di "step".
+
+    La exit_cleaner() esegue il cleanup in relazione
+    alle risorse generate durante l'esecuzione del 
+    processo.
  */
-static void *workerFoo(void *arg);
-
-/** Funzione di cleanup all'invocazione della exit() */
 static void exit_cleaner();
 
 /** Funzione che gestisce il parsing del flag "-n".
@@ -152,6 +190,16 @@ static int workers_creation(struct thread_ids *tIDs);
  */
 static int thread_creation(struct thread_ids *tIDs, char *buffer);
 
+/** A partire dal pianeta WATOR, produce il buffer
+    che il thread collector manda tramite socket al
+    processo visualizer.
+
+    \param WATOR: puntatore alla struttura WATOR.
+    \param buffer: puntatore al buffer.
+
+    \retval 0: produzione con successo.
+    \retval -1: errore (errno settato).
+ */
 static int produce_buffer(wator_t *WATOR, char *buffer);
 
 #endif /* __UTILS_H__ */
