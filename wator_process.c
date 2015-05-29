@@ -466,7 +466,7 @@ static int parser(int argc, char *argv[], struct conf_param *params)
         return -1;
     }
 
-    for (i = 0; i < argc; ++i)
+    for (i = 1; i < argc; ++i)
     {
         if ( strcmp(argv[i], "-n") == 0 )
         {
@@ -486,7 +486,7 @@ static int parser(int argc, char *argv[], struct conf_param *params)
         else
         {
             /* Gestisci il caso generale, supposto "file" */
-            err_check_min1(parsing_watorfile(argv[++i], params), -1);
+            err_check_min1(parsing_watorfile(argv[i], params), -1);
         }
     }
 
@@ -525,6 +525,7 @@ static int workers_creation(struct thread_ids *tIDs)
         }
     }
 
+    ++step;
     return 0;
 }
 
