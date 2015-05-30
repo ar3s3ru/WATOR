@@ -45,7 +45,7 @@ lib:  $(objects1) $(objects2)
 	-rm  -f $(LIBDIR)/$(LIBNAME1)
 	-rm  -f $(LIBDIR)/$(LIBNAME2)
 	ar -r $(LIBNAME1) $(objects1)
-	ar -r $(LIBNAME1) $(objects2)
+	ar -r $(LIBNAME2) $(objects2)
 	cp $(LIBNAME1) $(LIBDIR)
 	cp $(LIBNAME2) $(LIBDIR)
 
