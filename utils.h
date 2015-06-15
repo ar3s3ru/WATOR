@@ -1,7 +1,11 @@
-#define _GNU_SOURCE
-#define __USE_GNU
+/** 
+    \file utils.h
+    \author Danilo Cianfrone, matricola 501292
 
-#include <features.h>
+    Il programma qui presente è, in ogni sua parte, opera originale dell'autore.
+    Danilo Cianfrone.
+ */
+ 
 #include <stdio.h>
 #include <stdlib.h>
 #include <errno.h>      /* Per l'errno */
@@ -14,14 +18,6 @@
 #include <pthread.h>    /* POSIX Thread */
 #include <sys/socket.h> /* Socket */
 #include <sys/types.h>
-/** 
-    \file utils.h
-    \author Danilo Cianfrone, matricola 501292
-
-    Il programma qui presente è, in ogni sua parte, opera originale dell'autore.
-    Danilo Cianfrone.
- */
-
 #include <sys/stat.h>   /* mkdir() */
 #include <sys/un.h>     /* Sockaddr_un */
 
