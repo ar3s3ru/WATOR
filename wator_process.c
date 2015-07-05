@@ -15,7 +15,6 @@ extern int errno;
 static int pid;             /* Process ID per la fork del visualizer */
 static int wpid;            /* Process ID del processo wator */ 
 static int sck_fd;          /* Socket file descriptor */
-static int x_off, y_off;    /* Offsets per produrre le tasks */
 static int tasks_to_do;
 static int tasks_done = 0;
 static int step       = 0;  /* Descrive gli step del processo */
@@ -27,6 +26,11 @@ volatile sig_atomic_t dumping      = 0;
 volatile sig_atomic_t sig          = 0;
 volatile sig_atomic_t has_quit_vis = 0; 
 
+/* Parametri per la generazione di matrici KxN da dare ai worker */
+static char **array;
+static int divider;
+static int K, N;
+
 char *buffer   = NULL; /* Buffer per la read */
 wator_t *Wator = NULL; /* Struttura WATOR */
 
@@ -34,9 +38,11 @@ queue_t q_task           = { NULL, NULL, 0 };    /* Coda condivisa */
 struct conf_param params = {-1, -1, NULL, NULL}; /* Parametri processo */
 
 /* Mutex */
-static pthread_mutex_t mtx_wator = PTHREAD_MUTEX_INITIALIZER;
-static pthread_mutex_t mtx_queue = PTHREAD_MUTEX_INITIALIZER;
-static pthread_mutex_t mtx_tasks = PTHREAD_MUTEX_INITIALIZER;
+static pthread_mutex_t *mtx_array;
+static pthread_mutex_t  mtx_critc = PTHREAD_MUTEX_INITIALIZER;
+static pthread_mutex_t  mtx_wator = PTHREAD_MUTEX_INITIALIZER;
+static pthread_mutex_t  mtx_queue = PTHREAD_MUTEX_INITIALIZER;
+static pthread_mutex_t  mtx_tasks = PTHREAD_MUTEX_INITIALIZER;
 
 /* Condition variables */
 static pthread_cond_t empty_queue = PTHREAD_COND_INITIALIZER;
@@ -69,15 +75,64 @@ static void sigusr2_handler(int pid)
     has_quit_vis = 1;
 }
 
-static rect_t *produce_tasks(wator_t *WATOR, int x_off, int y_off)
+inline static void setting_tasks()
+{
+    int i = 0;
+
+    /** 
+        Settaggio parametri 
+     */
+    if (params.workers == 1 || params.workers == 2)
+    {
+        K = Wator->plan->nrow;
+        /* Nel caso di un worker, si usa tutta la matrice */
+        N = (params.workers - 1)? 
+                Wator->plan->ncol / 2 : Wator->plan->ncol;
+
+        divider = 1;
+        tasks_to_do = (params.workers - 1)? 2 : 1;
+    }
+
+    else
+    {
+        divider = (params.workers % 2 == 1)?
+                        (params.workers + 1) / 2 :
+                         params.workers / 2;
+
+        K = Wator->plan->nrow / divider;
+        N = Wator->plan->ncol / divider;
+
+        tasks_to_do = divider * divider;
+    }
+
+    /**
+        Creazione delle lock
+     */
+    mtx_array = 
+        (pthread_mutex_t *) malloc(sizeof(pthread_mutex_t) * tasks_to_do);
+
+    if (mtx_array == NULL)
+    {
+        perror("mtx_array not allocated");
+        exit(errno);
+    }
+
+    for (i = 0; i < tasks_to_do; ++i)
+        if (pthread_mutex_init(&mtx_array[i], NULL) != 0)
+        {
+            perror("Mutex init error");
+            exit(errno);
+        }
+}
+
+static rect_t *produce_tasks(wator_t *WATOR, int workers, int divider)
 {
     rect_t *elems = NULL;
 
-    int i, j;
-    int row = WATOR->plan->nrow / x_off;
-    int col = WATOR->plan->ncol / y_off;
+    int i, i_limit;
+    int j, j_limit;
 
-    if (WATOR == NULL || x_off < 1 || y_off < 1)
+    if (WATOR == NULL || workers <= 0)
     {
         errno = EINVAL;
         return NULL;
@@ -86,18 +141,111 @@ static rect_t *produce_tasks(wator_t *WATOR, int x_off, int y_off)
     if ( (elems = (rect_t *) malloc(sizeof(rect_t) * tasks_to_do)) == NULL )
         return NULL;
 
-    for (i = 0; i < row; ++i)
+    if (workers == 1) 
+        { i_limit = 1; j_limit = 1; }
+    else if (workers == 2) 
+        { i_limit = 1; j_limit = 2; }
+    else
+        { i_limit = divider; j_limit = divider; }
+
+    for (i = 0; i < i_limit; ++i)
     {
-        for (j = 0; j < col; ++j)
+        for (j = 0; j < j_limit; ++j)
         {
-            elems[(i * col) + j].p1.x = j * y_off;
-            elems[(i * col) + j].p1.y = i * x_off;
-            elems[(i * col) + j].p2.x = ((j + 1) * y_off) - 1;
-            elems[(i * col) + j].p2.y = ((i + 1) * x_off) - 1;
+            elems[(i * divider) + j].id = (i * divider) + j;
+
+            elems[(i * divider) + j].p1.x = i * K;
+            elems[(i * divider) + j].p1.y = j * N;
+
+            elems[(i * divider) + j].p2.x = (i == i_limit - 1)?
+                Wator->plan->nrow - 1 : ((i + 1) * K) - 1;
+            elems[(i * divider) + j].p2.y = (j == j_limit - 1)?
+                Wator->plan->ncol - 1 : ((j + 1) * N) - 1;
         }
     }
 
     return elems;
+}
+
+static int update_wator_multithread(wator_t *WATOR, qelem_t *workset,
+    pthread_mutex_t *mtx_elem, pthread_mutex_t *critic_mtx)
+{
+    int i, j;
+    int temp_x, temp_y;
+
+    if (WATOR == NULL    || workset == NULL || 
+        mtx_elem == NULL || critic_mtx == NULL)
+    {
+        errno = EINVAL;
+        return -1;
+    }
+
+    assert(workset->info.p1.x >= 0 && workset->info.p1.x <= WATOR->plan->nrow);
+    assert(workset->info.p2.x >= 0 && workset->info.p2.x <= WATOR->plan->nrow);
+    assert(workset->info.p1.y >= 0 && workset->info.p1.y <= WATOR->plan->ncol);
+    assert(workset->info.p1.y >= 0 && workset->info.p1.y <= WATOR->plan->ncol);
+    assert(workset->info.p1.x < workset->info.p2.x);
+    assert(workset->info.p1.y < workset->info.p2.y);
+
+    pthread_mutex_lock(mtx_elem);
+
+    for (i = workset->info.p1.x; i <= workset->info.p2.x; ++i)
+    {
+        for (j = workset->info.p1.y; j <= workset->info.p2.y; ++j)
+        {
+            /* Punto del bordo, acquisisci lock critica */
+            if (i == workset->info.p2.x - 1 || j == workset->info.p2.y - 1)
+                pthread_mutex_lock(critic_mtx);
+
+            switch (WATOR->plan->w[i][j])
+            {
+                /** In caso di errori, errno è settato dalle funzioni
+                    di aggiornamento.
+                 */
+                case SHARK:
+                    /** Applica le regole se array[i][j] = 0, ovvero se
+                        non sono state applicate in precedenza alla casella.
+                     */
+                    if (array[i][j] == 0)
+                    {
+                        if (shark_rule1(WATOR, i, j, &temp_x, &temp_y) != -1)
+                            array[temp_x][temp_y] = 1;
+                        else return -1;
+
+                        if (shark_rule2(WATOR, temp_x, temp_y, &temp_x, &temp_y) != -1)
+                            array[temp_x][temp_y] = 1;
+                        else return -1;
+                    }
+                    break;
+
+                case FISH:
+                    if (array[i][j] == 0)
+                    {
+                        if (fish_rule3(WATOR, i, j, &temp_x, &temp_y) != -1)
+                            array[temp_x][temp_y] = 1;
+                        else return -1;
+
+                        if (fish_rule4(WATOR, temp_x, temp_y, &temp_x, &temp_y) != -1)
+                            array[temp_x][temp_y] = 1;
+                        else return -1;
+                    }
+                    break;
+
+                default:
+                    /* Va avanti col ciclo, non ci sono regole da applicare */
+                    break;
+            }
+
+            /* Rilascia eventuale lock critica */
+            if (i == workset->info.p2.x - 1 || j == workset->info.p2.y - 1)
+                pthread_mutex_unlock(critic_mtx);
+        }
+    }
+
+    pthread_mutex_unlock(mtx_elem);
+    free(workset);
+
+    return 0;
 }
 
 static void *disp_routine()
@@ -111,10 +259,13 @@ static void *disp_routine()
         pthread_exit((void *) 1);
     }
 
+    /* Setta i parametri per la generazione delle task */
+    setting_tasks();
+
     while (looping)
     {
         /* Produci le tasks */
-        if ( (elems = produce_tasks(Wator, x_off, y_off)) ==  NULL )
+        if ( (elems = produce_tasks(Wator, params.workers, divider)) ==  NULL )
         {
             perror("Error producing tasks");
             pthread_exit((void *) 1);
@@ -156,6 +307,10 @@ static void *disp_routine()
         pthread_mutex_unlock(&mtx_tasks);
         /* Reset valore array di elementi */
         elems = NULL;
+        
+        /* Resetta la matrice di appoggio */
+        for (i = 0; i < Wator->plan->nrow; ++i)
+            memset(array[i], 0, Wator->plan->ncol);
     }
 
     /* Join sui workers */
@@ -208,14 +363,13 @@ static void *work_routine(void *arg)
         /* Esco dalla sezione critica della queue */
         pthread_mutex_unlock(&mtx_queue);
 
-        /* Prendi la lock sul WATOR */
-        pthread_mutex_lock(&mtx_wator);
-
-        /* Esegui il lavoro sul workset */
-        free(workset);
-
-        /* Esci dalla sezione critica del WATOR */
-        pthread_mutex_unlock(&mtx_wator);
+        /* SEZIONE CRITICA */
+        if (update_wator_multithread(Wator, workset, 
+                &mtx_array[workset->info.id], &mtx_critc) != 0)
+        {
+            perror("Error updating wator");
+            pthread_exit((void *) -1);
+        }
 
         /* Entra nella sezione critica del tasks counter */
         pthread_mutex_lock(&mtx_tasks);
@@ -277,7 +431,7 @@ static void *coll_routine(void *bufarg)
         if (chronons == params.chronons)
         {
             /* Entra nella regione critica del WATOR */
-            pthread_mutex_lock(&mtx_wator);
+            pthread_mutex_lock(&mtx_queue);
 
             /* Produce il buffer */
             if (produce_buffer(Wator, buffer) == -1)
@@ -288,7 +442,7 @@ static void *coll_routine(void *bufarg)
             }
             
             /* Esce dalla regione critica */
-            pthread_mutex_unlock(&mtx_wator);
+            pthread_mutex_unlock(&mtx_queue);
 
             /* Il dispatcher può riprendere a generare tasks */
             pthread_cond_signal(&tasks_disp);
@@ -330,6 +484,7 @@ static void *coll_routine(void *bufarg)
 
 static void exit_cleaner()
 {
+    int i = 0;
 
     /* STEP 1: Libera la memoria allocata dinamicamente */
     if (step > 0)
@@ -353,11 +508,17 @@ static void exit_cleaner()
         unlink(SOCKNAME);
     }
 
-    /* STEP 4: Dealloca l'array dei worker thread */
+    /* STEP 4: Dealloca lo spazio allocato dinamicamente
+               nelle fasi avanzate del programma */
     if (step > 3)
     {
         free(buffer);
         free(tIDs.workIDs);
+
+        for (i = 0; i < tasks_to_do; ++i)
+            pthread_mutex_destroy(&mtx_array[i]);
+
+        free(mtx_array);
     }
 }
 
@@ -589,6 +750,8 @@ int main(int argc, char *argv[], char *envp[])
     struct stat check_conf;      /* Per il check su "wator.conf" */
     sigset_t set;
 
+    int i;
+
     /* Acquisisce il PID di wator */
     wpid = getpid();
 
@@ -688,11 +851,6 @@ int main(int argc, char *argv[], char *envp[])
                NULL,
                "Error loading WATOR file");
 
-    x_off = Wator->plan->nrow % 2 ? K : K_e ;
-    y_off = Wator->plan->ncol % 2 ? N : N_e ;
-
-    tasks_to_do = (Wator->plan->nrow / x_off) * (Wator->plan->ncol / y_off);
-
     /* Passaggio allo STEP 2, completato */
     ++step;
 
@@ -740,6 +898,18 @@ int main(int argc, char *argv[], char *envp[])
                NULL,
                "Error allocating buffer");
 
+    /* Matrice d'appoggio per l'aggiornamento */
+    array = 
+        (char **) malloc(sizeof(char *) * Wator->plan->nrow);
+
+    for (i = 0; i < Wator->plan->nrow; ++i)
+    {
+        array[i] = 
+            (char *) malloc(sizeof(char) * Wator->plan->ncol);
+
+        memset(array[i], 0, Wator->plan->ncol);
+    }
+
     /* Creazione thread */
     if (thread_creation(&tIDs, buffer) == -1)
         /* Errore creazione thread */
@@ -747,6 +917,12 @@ int main(int argc, char *argv[], char *envp[])
 
     pthread_join(tIDs.collID, NULL);
     pthread_join(tIDs.dispID, NULL);
+
+    /* Libera la matrice di appoggio */
+    for (i = 0; i < Wator->plan->nrow; ++i)
+        free(array[i]);
+
+    free(array);
 
     /** Uccide visualizer con segnale sig e aspetta
         affinchè il segnale venga gestito */

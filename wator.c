@@ -338,7 +338,7 @@ int shark_rule1(wator_t *pw, int x, int y, int *k, int *l)
     char water_c = 0;
 
     /* Errore, struttura WATOR è uguale a NULL */
-    if (pw == NULL)
+    if (pw == NULL || k == NULL || l == NULL)
     {
         errno_set(EINVAL, -1);
     }
@@ -384,7 +384,13 @@ int shark_rule1(wator_t *pw, int x, int y, int *k, int *l)
     }
 
     /* Lo squalo rimane fermo */
-    if (shark_c == 4) return STOP;
+    if (shark_c == 4)
+    {
+        *k = x;
+        *l = y;
+         
+        return STOP;
+    }
 
     while (1)
     {
@@ -436,7 +442,7 @@ int shark_rule2(wator_t *pw, int x, int y, int *k, int *l)
     char born = 0;
 
     /* Errore, struttura WATOR è uguale a NULL */
-    if (pw == NULL)
+    if (pw == NULL || k == NULL || l == NULL)
     {
         errno_set(EINVAL, -1);
     }
@@ -517,7 +523,7 @@ int fish_rule3 (wator_t* pw, int x, int y, int *k, int* l)
     char water_c = 0;
 
     /* Errore, struttura WATOR è uguale a NULL */
-    if (pw == NULL)
+    if (pw == NULL || k == NULL || l == NULL)
     {
         errno_set(EINVAL, -1);
     }
@@ -562,7 +568,13 @@ int fish_rule3 (wator_t* pw, int x, int y, int *k, int* l)
     }
 
     /* Il pesce non trova spazi liberi, rimane fermo */
-    if (water_c == 0) return STOP;
+    if (water_c == 0)
+    {
+        *k = x;
+        *l = y;
+
+        return STOP;
+    }
 
     while (water_c > 0)
     {
@@ -600,7 +612,7 @@ int fish_rule4 (wator_t* pw, int x, int y, int *k, int* l)
     char born = 0;
 
     /* Errore, struttura WATOR è uguale a NULL */
-    if (pw == NULL)
+    if (pw == NULL || k == NULL || l == NULL)
     {
         errno_set(EINVAL, -1);
     }

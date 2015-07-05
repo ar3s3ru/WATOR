@@ -19,9 +19,9 @@
  */
 struct conf_param
 {
-    int workers;        /* Numero di workers */
-    int chronons;       /* Chronon di aggiornamento */
-    char *dumpfile;     /* Nome del dumpfile */
+    int   workers;     /* Numero di workers */
+    int   chronons;    /* Chronon di aggiornamento */
+    char *dumpfile;    /* Nome del dumpfile */
     char *watorfile;   /* Nome del file planet */
 };
 
@@ -31,7 +31,7 @@ struct conf_param
 typedef struct _worker_id
 {
     pthread_t w_tID;
-    int w_wID;
+    int       w_wID;
 } wthread_t;
 
 /** Struttura per l'aspetto multithread: dispatcher ID,
@@ -71,17 +71,39 @@ static void sigusr1_handler(int pid);
  */
 static void sigusr2_handler();
 
+/** Inizializza i parametri necessari per la generazione delle task
+    e l'utilizzo di esse da parte dei worker.
+ */
+inline static void setting_tasks();
+
 /** La funzione produce le tasks per la simulazione da dare ai worker.
     Viene invocata dal thread dispatcher.
 
     \param WATOR: puntatore alla struttura WATOR.
-    \param x_off: offset sulle righe.
-    \param y_off: offset sulle colonne.
+    \param workers: numero di workers.
+    \param divider: radice quadrata del numero di task da generare.
 
     \retval NULL in caso di errore.
     \retval elems in caso di successo.
  */
-static rect_t *produce_tasks(wator_t *WATOR, int x_off, int y_off);
+static rect_t *produce_tasks(wator_t *WATOR, int workers, int divider);
+
+/** La funzione aggiorna la struttura WATOR assicurando thread safety.
+    Lavora su una porzione della struttura (descritta dall'elemento workset)
+    utilizzando il mutex specifico della propria porzione e il mutex per
+    le zone critiche di aggiornamento.
+
+    \param WATOR: puntatore alla struttura WATOR.
+    \param workset: puntatore all'elemento che descrive la porzione
+                    della struttura da aggiornare.
+    \param mtx_elem: puntatore al mutex del workset.
+    \param critic_mtx: puntatore al mutex per le zone critiche.
+
+    \retval -1 in caso di errore (errno settato).
+    \retval 0 in caso di successo.
+ */
+static int update_wator_multithread(wator_t *WATOR, qelem_t *workset,
+    pthread_mutex_t *mtx_elem, pthread_mutex_t *critic_mtx);
 
 /** Esegue la routine del thread dispatcher.
     È responsabile della creazione dei thread worker,

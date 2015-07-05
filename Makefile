@@ -1,20 +1,24 @@
 ################################
 #
 #     Makefile WATOR (progetto lso 2015)
-#     (fram 1)(fram 2)
+#     (fram 1)(fram 2)(fram 3)
 ################################
 
 # ***** DA COMPLETARE ******  con i file da consegnare *.c e *.h     
 # primo frammento 
-FILE_DA_CONSEGNARE1=wator.c wator.h
+FILE_DA_CONSEGNARE1=wator.c
 
 # secondo frammento 
-FILE_DA_CONSEGNARE2=utils.c utils.h wator_process.c wator_process.h visualizer.c visualizer.h wator.c wator.h
+FILE_DA_CONSEGNARE2=wator.c wator.h visualizer.c visualizer.h watorscript wator_process.h wator_process.c utils.c utils.h
+
+# terzo frammento 
+FILE_DA_CONSEGNARE3=wator.c wator.h visualizer.c visualizer.h watorscript wator_process.h wator_process.c utils.c utils.h
+
 
 # Compilatore
 CC= gcc
 # Flag di compilazione
-CFLAGS = -Wall -pedantic -g
+CFLAGS = -Werror -Wall -pedantic -g
 
 # Librerie 
 # Directory in cui si trovano le librerie
@@ -31,12 +35,16 @@ LIBNAME2 = libUtils.a
 objects1 = wator.o
 objects2 = utils.o
 
+
+
+
 # Nome eseguibili primo frammento
 EXE1=shark1
 EXE2=shark2
 EXE3=shark3
 
-.PHONY: clean cleanall lib libUtils test11 test12 consegna1 docu
+.PHONY: clean cleanall lib test11 test12 consegna1 docu
+
 
 # creazione libreria 
 lib:  $(objects1) $(objects2)
@@ -48,6 +56,7 @@ lib:  $(objects1) $(objects2)
 	ar -r $(LIBNAME2) $(objects2)
 	cp $(LIBNAME1) $(LIBDIR)
 	cp $(LIBNAME2) $(LIBDIR)
+
 
 ###### Primo test 
 shark1: test-one.o 
@@ -71,7 +80,8 @@ test-three.o: test-three.c wator.h
 	$(CC) $(CFLAGS) -c $<	 
 
 #make rule per gli altri .o del primo frammento (***DA COMPLETARE***)
-
+wator.o: wator.c wator.h
+	$(CC) $(CFLAGS) -c $<
 
 #### secondo frammento
 
@@ -83,14 +93,22 @@ visualizer: visualizer.o
 	$(CC) -o $@ $^ $(LIBS) -lUtils -pthread
 
 wator_process.o: wator_process.c wator_process.h $(LIBNAME1) $(LIBNAME2)
-	$(CC) $(CFLAG) -c $<
+	$(CC) $(CFLAGS) -c $<
 
 visualizer.o: visualizer.c visualizer.h $(LIBNAME2)
-	$(CC) $(CFLAG) -c $<
+	$(CC) $(CFLAGS) -c $<
 
 # make rule per gli altri .o del secondo/terzo frammento (***DA COMPLETARE***)
 utils.o: utils.c utils.h
 	$(CC) $(CFLAGS) -c $<
+
+######### target visualizer e wator (da completare)
+
+
+# make rule per gli altri .o del secondo/terzo frammento (***DA COMPLETARE***)
+
+
+
 
 ########### NON MODIFICARE DA QUA IN POI ################
 # genera la documentazione con doxygen
@@ -197,6 +215,7 @@ test22:
 	cp DATA/$(DATA2) .
 	cp DATA/$(CONF2) .
 	chmod 644 $(DATA1) $(DATA2) $(CONF2)
+	mv $(CONF2) wator.conf
 	rm -fr ./tmp
 	mkdir ./tmp
 	./testseq
@@ -213,11 +232,30 @@ test23:
 	cp DATA/$(DATA2) .
 	cp DATA/$(CONF2) .
 	chmod 644 $(DATA1) $(DATA2) $(CONF2)
+	mv $(CONF2) wator.conf
 	rm -fr ./tmp
 	mkdir ./tmp
 	./testcom
 	@echo "********** Test23 superato!"
 
+
+# test comunicazione wator visualizzatore 
+DATA3=planet3.dat
+testfinale:
+	make clean
+	make lib
+	make wator
+	make visualizer
+	-rm -fr $(DATA3) $(DATA2) 
+	cp DATA/$(DATA3) .
+	cp DATA/$(DATA2) .
+	cp DATA/$(CONF2) .
+	chmod 644 $(DATA3) $(DATA2) $(CONF2)
+	mv $(CONF2) wator.conf
+	rm -fr ./tmp
+	mkdir ./tmp
+	./testpar
+	@echo "********** Test finale superato!"
 
 SUBJECT1A="lso15: consegna primo frammento - corso A"
 SUBJECT1B="lso15: consegna primo frammento - corso B"
@@ -255,3 +293,16 @@ consegna2:
 	@echo "$(SUBJECT2A) oppure"
 	@echo "$(SUBJECT2B)"
 
+SUBJECT3A="lso15: consegna finale - corso A"
+SUBJECT3B="lso15: consegna finale - corso B"
+# target di consegna del terzo frammento
+# effettua i test e prepara il tar per la consegna
+consegna3:
+	make clean
+	make testfinale
+	./gruppo-check.pl < gruppo.txt
+	tar -cvf $(USER)-f3.tar ./gruppo.txt ./Makefile $(FILE_DA_CONSEGNARE3) 
+	@echo "*** TERZO FRAMMENTO: TAR PRONTO $(USER)-f3.tar "
+	@echo "inviare come allegato a lso.di@listgateway.unipi.it con subject:"
+	@echo "$(SUBJECT3A) oppure"
+	@echo "$(SUBJECT3B)"

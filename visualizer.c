@@ -74,6 +74,24 @@ inline static int update_screen(FILE *stream, char *buffer,
 
     for (i = 0, j = 0; i < (nrow * ncol); ++i, ++j)
     {
+        if (stream == stdout)
+        {
+            switch (buffer[i])
+            {
+                case 'W':
+                    fprintf(stream, ANSI_COLOR_BLUE);
+                    break;
+                case 'F':
+                    fprintf(stream, ANSI_COLOR_GREEN);
+                    break;
+                case 'S':
+                    fprintf(stream, ANSI_COLOR_RED);
+                    break;
+                default:
+                    break;
+            }
+        }
+
         /* Termine colonna, vai a capo */
         if (j == ncol - 1)
         {    
@@ -82,6 +100,9 @@ inline static int update_screen(FILE *stream, char *buffer,
         }
         else
             fprintf(stream, "%c ", buffer[i]);
+
+        if (stream == stdout)
+            fprintf(stream, ANSI_COLOR_RESET);
     }
 
     fflush(stream);
@@ -220,8 +241,8 @@ int main(int argc, char *argv[], char *envp[])
         if (!dumping)
         {
             /* Mostra il pianeta a schermo */
-            system("clear");    /* Invoca la clear della shell */
-            printf("Iteration: %d.\n", iteration++);
+            system("clear");
+            printf("Iteration: %ld.\n", iteration++);
             fflush(stdout);
             update_screen(stdout, buffer, nrow, ncol);
         }
